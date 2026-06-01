@@ -1,0 +1,13 @@
+{
+  "default": "dev-box",
+  "targets": {
+    "dev-box": {
+      "aws_profile": "example-profile",
+      "auto_sso_login": true,
+      "sso_profile": "example-profile",
+      "instance_id": "i-0123456789abcdef0",
+      "host_hint": "dev-box.example.internal",
+      "private_ip": "10.0.0.10"
+    }
+  }
+}

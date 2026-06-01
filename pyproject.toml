@@ -1,0 +1,12 @@
+[project]
+name = "ssm-bridge-mcp"
+version = "0.1.0"
+description = "MCP server and CLI for AWS SSM-managed instance access."
+requires-python = ">=3.11"
+dependencies = [
+  "mcp>=1.27.0"
+]
+
+[project.scripts]
+ssm-bridge = "cli:main"
+ssm-bridge-mcp = "mcp_server:main"
