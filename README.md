@@ -1,5 +1,7 @@
 # SSM Bridge
 
+<img width="1536" height="1024" alt="ChatGPT Image Jun 3, 2026, 11_00_25 AM" src="https://github.com/user-attachments/assets/1dbe64fa-9762-492b-8075-537718c7cec6" />
+
 SSM Bridge is a local MCP server and terminal CLI for running commands and moving files on AWS SSM-managed Linux instances.
 
 It is useful when you want an MCP client or local terminal workflow to inspect a host, fetch logs, upload a script, read a config file, or run diagnostics without opening SSH.
