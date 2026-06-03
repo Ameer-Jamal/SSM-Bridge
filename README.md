@@ -17,6 +17,12 @@ Install Python dependencies:
 python3 -m pip install -r requirements.txt
 ```
 
+To install the CLI entry points from `pyproject.toml`, install the project locally:
+
+```bash
+python3 -m pip install -e .
+```
+
 ## Quickstart with Environment Variables
 
 For a single target, you can configure SSM Bridge entirely through environment variables:
@@ -36,10 +42,10 @@ export SSM_BRIDGE_AUTO_SSO_LOGIN=true
 export SSM_BRIDGE_SSO_PROFILE=example-profile
 ```
 
-If AWS reports an expired SSO token and `SSM_BRIDGE_AUTO_SSO_LOGIN` is not false, SSM Bridge runs:
+If AWS reports an expired SSO token and `SSM_BRIDGE_AUTO_SSO_LOGIN` is not false, SSM Bridge runs `aws sso login` using `SSM_BRIDGE_SSO_PROFILE` when set, or `SSM_BRIDGE_AWS_PROFILE` otherwise:
 
 ```bash
-aws sso login --profile "$SSM_BRIDGE_SSO_PROFILE"
+aws sso login --profile example-profile
 ```
 
 ## Quickstart with a Config File
@@ -73,7 +79,13 @@ ssm_get_file
 
 ## Codex Registration
 
-Add this to `~/.codex/config.toml`:
+Register the MCP server with Codex:
+
+```bash
+codex mcp add ssmBridge -- python3 /absolute/path/to/ssm-bridge-mcp/mcp_server.py
+```
+
+Or add this manually to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.ssmBridge]
@@ -103,6 +115,8 @@ ssm_run(
 
 ## Terminal CLI
 
+Run through Python:
+
 ```bash
 python3 cli.py targets
 python3 cli.py status --target dev-box
@@ -110,6 +124,14 @@ python3 cli.py run 'whoami && hostname' --target dev-box
 python3 cli.py get-file /etc/hostname --target dev-box
 python3 cli.py upload /tmp/script.sh /tmp/script.sh --target dev-box
 python3 cli.py download /tmp/remote.log /tmp/remote.log --target dev-box
+```
+
+Or use the installed `ssm-bridge` command after `python3 -m pip install -e .`:
+
+```bash
+ssm-bridge targets
+ssm-bridge status --target dev-box
+ssm-bridge run 'whoami && hostname' --target dev-box
 ```
 
 Direct target overrides are also supported:
