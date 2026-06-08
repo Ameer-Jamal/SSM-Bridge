@@ -10,6 +10,9 @@ class FakeBackend:
     def status(self, **kwargs):
         return {"online": True, "kwargs": kwargs}
 
+    def find_instances(self, **kwargs):
+        return {"count": 0, "instances": [], "kwargs": kwargs}
+
     def run_command(self, command, **kwargs):
         return {"success": True, "command": command, "kwargs": kwargs}
 

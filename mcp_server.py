@@ -28,6 +28,11 @@ def create_mcp_server(backend: SsmBridgeBackend | None = None):
         return backend.status(target=target, aws_profile=aws_profile, instance_id=instance_id)
 
     @app.tool()
+    def ssm_find_instances(query: str, aws_profile: str = "") -> dict[str, Any]:
+        """Find EC2 instances by instance id or Name tag substring and include SSM status."""
+        return backend.find_instances(query=query, aws_profile=aws_profile)
+
+    @app.tool()
     def ssm_run(
         command: str,
         target: str = "",

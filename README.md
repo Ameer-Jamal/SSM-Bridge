@@ -71,6 +71,7 @@ export SSM_BRIDGE_CONFIG=/path/to/targets.json
 ```text
 ssm_list_targets
 ssm_status
+ssm_find_instances
 ssm_run
 ssm_upload
 ssm_download
@@ -79,12 +80,14 @@ ssm_get_file
 
 `ssm_run` executes arbitrary shell commands through AWS Systems Manager Run Command using `AWS-RunShellScript`. The effective user and privileges are controlled by AWS SSM and the target host configuration.
 
+`ssm_find_instances` searches EC2 by instance id or by a Name tag substring and includes SSM online status when available. `ssm_run` refuses an explicit fuzzy target when multiple EC2 instances match the target string. Pass `aws_profile` and `instance_id` after choosing an instance.
+
 ## Codex Registration
 
 Register the MCP server with Codex:
 
 ```bash
-codex mcp add ssmBridge -- python3 /absolute/path/to/ssm-bridge-mcp/mcp_server.py
+codex mcp add ssmBridge -- python3 /absolute/path/to/ssm-bridge/mcp_server.py
 ```
 
 Or add this manually to `~/.codex/config.toml`:
@@ -92,13 +95,14 @@ Or add this manually to `~/.codex/config.toml`:
 ```toml
 [mcp_servers.ssmBridge]
 command = "python3"
-args = ["/absolute/path/to/ssm-bridge-mcp/mcp_server.py"]
+args = ["/absolute/path/to/ssm-bridge/mcp_server.py"]
 ```
 
 ## MCP Examples
 
 ```text
 ssm_status(target="dev-box")
+ssm_find_instances(query="dev-box")
 ssm_run(command="whoami && hostname", target="dev-box")
 ssm_get_file(remote_path="/etc/hostname", target="dev-box")
 ssm_upload(local_path="/tmp/script.sh", remote_path="/tmp/script.sh", target="dev-box")

@@ -112,6 +112,24 @@ class SsmBridgeBackend:
             "online": bool(records and records[0].get("PingStatus") == "Online"),
         }
 
+    def find_instances(self, query: str, *, aws_profile: str = "") -> dict[str, Any]:
+        term = query.strip()
+        if not term:
+            raise ValueError("query is required")
+        profile = self._profile_for_lookup(aws_profile=aws_profile)
+        instances = self._find_ec2_instances(term, aws_profile=profile)
+        ssm_by_id = self._ssm_info_by_instance_id(profile, [item["instance_id"] for item in instances])
+        for item in instances:
+            ssm = ssm_by_id.get(item["instance_id"], {})
+            item["ssm"] = ssm
+            item["ssm_online"] = ssm.get("PingStatus") == "Online"
+        return {
+            "query": term,
+            "aws_profile": profile,
+            "count": len(instances),
+            "instances": instances,
+        }
+
     def run_command(
         self,
         command: str,
@@ -124,6 +142,7 @@ class SsmBridgeBackend:
     ) -> dict[str, Any]:
         if not command.strip():
             raise ValueError("command is required")
+        self._raise_if_ambiguous_target(target=target, aws_profile=aws_profile, instance_id=instance_id)
         resolved = self.resolve_target(target=target, aws_profile=aws_profile, instance_id=instance_id)
         params = json.dumps({"commands": [command]})
         send = self._aws_json(
@@ -341,10 +360,120 @@ class SsmBridgeBackend:
             sso_profile=resolved.sso_profile or resolved.aws_profile,
         )
 
+    def _raise_if_ambiguous_target(self, *, target: str, aws_profile: str, instance_id: str) -> None:
+        term = target.strip()
+        if instance_id or not term:
+            return
+        resolved = self.resolve_target(target=target, aws_profile=aws_profile, instance_id=instance_id)
+        matches = self._find_ec2_instances(term, aws_profile=aws_profile or resolved.aws_profile)
+        if len(matches) <= 1:
+            return
+        candidates = [
+            {
+                "instance_id": item["instance_id"],
+                "name": item["name"],
+                "state": item["state"],
+                "private_ip": item["private_ip"],
+            }
+            for item in matches
+        ]
+        raise SsmBridgeError(
+            "ambiguous target "
+            f"{term!r}: found {len(matches)} EC2 instances. "
+            "Pass aws_profile and instance_id, or use ssm_find_instances to choose one. "
+            f"Candidates: {json.dumps(candidates, sort_keys=True)}"
+        )
+
+    def _find_ec2_instances(self, query: str, *, aws_profile: str) -> list[dict[str, Any]]:
+        if not aws_profile:
+            raise ValueError("aws_profile is required for EC2 instance search")
+        filters = ["Name=instance-state-name,Values=pending,running,stopping,stopped"]
+        if query.startswith("i-"):
+            args = [
+                "ec2",
+                "describe-instances",
+                "--profile",
+                aws_profile,
+                "--instance-ids",
+                query,
+                "--filters",
+                *filters,
+            ]
+        else:
+            args = [
+                "ec2",
+                "describe-instances",
+                "--profile",
+                aws_profile,
+                "--filters",
+                f"Name=tag:Name,Values=*{query}*",
+                *filters,
+            ]
+        data = self._aws_json(args, description="describe EC2 instances")
+        return self._ec2_instances_from_response(data)
+
+    def _ssm_info_by_instance_id(self, aws_profile: str, instance_ids: list[str]) -> dict[str, dict[str, Any]]:
+        if not instance_ids:
+            return {}
+        info = self._aws_json(
+            [
+                "ssm",
+                "describe-instance-information",
+                "--profile",
+                aws_profile,
+                "--filters",
+                f"Key=InstanceIds,Values={','.join(instance_ids)}",
+            ],
+            description="describe SSM instance information",
+        )
+        records = info.get("InstanceInformationList") or []
+        return {
+            str(record.get("InstanceId")): record
+            for record in records
+            if record.get("InstanceId")
+        }
+
+    def _profile_for_lookup(self, *, aws_profile: str = "") -> str:
+        if aws_profile:
+            return aws_profile
+        target_name = os.environ.get(ENV_TARGET, "") or self._config.get("default") or ""
+        target_data = (self._config.get("targets") or {}).get(target_name, {})
+        env_target = self._target_from_env()
+        if target_data:
+            return self._target_from_config(target_name, target_data).aws_profile
+        if env_target:
+            return env_target.aws_profile
+        raise ValueError("aws_profile is required for EC2 instance search")
+
     def _load_config(self) -> dict[str, Any]:
         if not self.config_path.exists():
             return {"default": "", "targets": {}}
         return json.loads(self.config_path.read_text(encoding="utf-8"))
+
+    @staticmethod
+    def _ec2_instances_from_response(data: dict[str, Any]) -> list[dict[str, Any]]:
+        instances = []
+        for reservation in data.get("Reservations") or []:
+            for item in reservation.get("Instances") or []:
+                tags = {
+                    str(tag.get("Key")): str(tag.get("Value"))
+                    for tag in item.get("Tags") or []
+                    if tag.get("Key") is not None
+                }
+                placement = item.get("Placement") or {}
+                state = item.get("State") or {}
+                instances.append(
+                    {
+                        "instance_id": str(item.get("InstanceId") or ""),
+                        "name": tags.get("Name", ""),
+                        "state": str(state.get("Name") or ""),
+                        "private_ip": str(item.get("PrivateIpAddress") or ""),
+                        "public_dns": str(item.get("PublicDnsName") or ""),
+                        "availability_zone": str(placement.get("AvailabilityZone") or ""),
+                        "launch_time": str(item.get("LaunchTime") or ""),
+                    }
+                )
+        return sorted(instances, key=lambda item: (item["name"], item["instance_id"]))
 
     @staticmethod
     def _target_from_config(name: str, data: dict[str, Any]) -> SsmTarget:
