@@ -5,6 +5,7 @@ import json
 import os
 import shlex
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,7 @@ from typing import Any
 DEFAULT_CONFIG_PATH = Path(__file__).with_name("targets.json")
 DEFAULT_UPLOAD_CHUNK_SIZE = 7000
 DEFAULT_TEXT_READ_LIMIT = 200_000
+SSM_COMMAND_TERMINAL_STATUSES = {"Success", "Cancelled", "TimedOut", "Failed", "Undeliverable"}
 
 ENV_CONFIG_PATH = "SSM_BRIDGE_CONFIG"
 ENV_TARGET = "SSM_BRIDGE_TARGET"
@@ -167,38 +169,10 @@ class SsmBridgeBackend:
         if not command_id:
             raise SsmBridgeError(f"AWS did not return a command id: {send}")
 
-        wait = subprocess.run(
-            [
-                self.aws_binary,
-                "ssm",
-                "wait",
-                "command-executed",
-                "--profile",
-                resolved.aws_profile,
-                "--command-id",
-                command_id,
-                "--instance-id",
-                resolved.instance_id,
-            ],
-            text=True,
-            capture_output=True,
-            timeout=max(1, timeout_seconds),
-            check=False,
-        )
-
-        invocation = self._aws_json(
-            [
-                "ssm",
-                "get-command-invocation",
-                "--profile",
-                resolved.aws_profile,
-                "--command-id",
-                command_id,
-                "--instance-id",
-                resolved.instance_id,
-            ],
-            description="get SSM command invocation",
+        invocation, wait_return_code, wait_stderr = self._wait_for_command_invocation(
+            command_id=command_id,
             target=resolved,
+            timeout_seconds=timeout_seconds,
         )
         status = invocation.get("Status") or ""
         response_code = invocation.get("ResponseCode")
@@ -210,8 +184,8 @@ class SsmBridgeBackend:
             "response_code": response_code,
             "stdout": invocation.get("StandardOutputContent") or "",
             "stderr": invocation.get("StandardErrorContent") or "",
-            "wait_return_code": wait.returncode,
-            "wait_stderr": wait.stderr or "",
+            "wait_return_code": wait_return_code,
+            "wait_stderr": wait_stderr,
             "success": status == "Success" and response_code == 0,
         }
 
@@ -517,6 +491,58 @@ class SsmBridgeBackend:
             return json.loads(result.stdout or "{}")
         except json.JSONDecodeError as exc:
             raise SsmBridgeError(f"failed to parse AWS JSON for {description}: {exc}") from exc
+
+    def _wait_for_command_invocation(
+        self,
+        *,
+        command_id: str,
+        target: SsmTarget,
+        timeout_seconds: int,
+    ) -> tuple[dict[str, Any], int, str]:
+        deadline = time.monotonic() + max(1, timeout_seconds)
+        poll_interval = 2.0
+        last_invocation: dict[str, Any] = {}
+        last_error = ""
+
+        while True:
+            try:
+                invocation = self._aws_json(
+                    [
+                        "ssm",
+                        "get-command-invocation",
+                        "--profile",
+                        target.aws_profile,
+                        "--command-id",
+                        command_id,
+                        "--instance-id",
+                        target.instance_id,
+                    ],
+                    description="get SSM command invocation",
+                    target=target,
+                )
+            except SsmBridgeError as exc:
+                last_error = str(exc)
+                if "InvocationDoesNotExist" not in last_error:
+                    raise
+            else:
+                last_invocation = invocation
+                status = str(invocation.get("Status") or "")
+                if status in SSM_COMMAND_TERMINAL_STATUSES:
+                    return invocation, 0, ""
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                message = (
+                    f"timed out after {max(1, timeout_seconds)} seconds waiting for SSM command "
+                    f"{command_id}"
+                )
+                if last_error:
+                    message = f"{message}; last_error={last_error}"
+                if not last_invocation:
+                    last_invocation = {"Status": "Pending", "ResponseCode": -1}
+                return last_invocation, 124, message
+
+            time.sleep(min(poll_interval, remaining))
 
     def _run_aws(self, args: list[str]) -> subprocess.CompletedProcess[str]:
         result = subprocess.run(

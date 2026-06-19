@@ -190,7 +190,6 @@ def test_run_command_returns_structured_invocation(tmp_path: Path) -> None:
 
     responses = [
         completed(json.dumps({"Command": {"CommandId": "cmd-1"}})),
-        completed(""),
         completed(json.dumps({"Status": "Success", "ResponseCode": 0, "StandardOutputContent": "ok\n"})),
     ]
 
@@ -201,6 +200,53 @@ def test_run_command_returns_structured_invocation(tmp_path: Path) -> None:
     assert result["command_id"] == "cmd-1"
     assert result["stdout"] == "ok\n"
     assert run.call_args_list[0].args[0][:4] == ["aws", "ssm", "send-command", "--profile"]
+    assert run.call_args_list[1].args[0][:4] == ["aws", "ssm", "get-command-invocation", "--profile"]
+
+
+def test_run_command_polls_until_terminal_status(tmp_path: Path) -> None:
+    config = tmp_path / "targets.json"
+    write_config(config)
+    backend = SsmBridgeBackend(config_path=config)
+
+    responses = [
+        completed(json.dumps({"Command": {"CommandId": "cmd-1"}})),
+        completed(json.dumps({"Status": "InProgress", "ResponseCode": -1})),
+        completed(json.dumps({"Status": "Success", "ResponseCode": 0, "StandardOutputContent": "done\n"})),
+    ]
+
+    with (
+        patch("ssm_bridge.subprocess.run", side_effect=responses) as run,
+        patch("ssm_bridge.time.sleep", return_value=None) as sleep,
+    ):
+        result = backend.run_command("sleep 5")
+
+    assert result["success"] is True
+    assert result["stdout"] == "done\n"
+    assert result["wait_return_code"] == 0
+    assert run.call_count == 3
+    sleep.assert_called_once()
+
+
+def test_run_command_returns_inprogress_on_poll_timeout(tmp_path: Path) -> None:
+    config = tmp_path / "targets.json"
+    write_config(config)
+    backend = SsmBridgeBackend(config_path=config)
+
+    responses = [
+        completed(json.dumps({"Command": {"CommandId": "cmd-1"}})),
+        completed(json.dumps({"Status": "InProgress", "ResponseCode": -1})),
+    ]
+
+    with (
+        patch("ssm_bridge.subprocess.run", side_effect=responses),
+        patch("ssm_bridge.time.monotonic", side_effect=[0.0, 2.0]),
+    ):
+        result = backend.run_command("sleep 5", timeout_seconds=1)
+
+    assert result["success"] is False
+    assert result["status"] == "InProgress"
+    assert result["wait_return_code"] == 124
+    assert "timed out after 1 seconds" in result["wait_stderr"]
 
 
 def test_run_command_refuses_ambiguous_target(tmp_path: Path) -> None:
@@ -237,7 +283,6 @@ def test_run_command_instance_id_bypasses_ambiguity_check(tmp_path: Path) -> Non
     backend = SsmBridgeBackend(config_path=config)
     responses = [
         completed(json.dumps({"Command": {"CommandId": "cmd-1"}})),
-        completed(""),
         completed(json.dumps({"Status": "Success", "ResponseCode": 0, "StandardOutputContent": "ok\n"})),
     ]
 
