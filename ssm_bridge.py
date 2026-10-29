@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_CONFIG_PATH = Path(__file__).with_name("targets.json")
 DEFAULT_UPLOAD_CHUNK_SIZE = 7000
 DEFAULT_TEXT_READ_LIMIT = 200_000
@@ -66,6 +65,7 @@ class SsmBridgeBackend:
         self._config = self._load_config()
 
     def list_targets(self) -> dict[str, Any]:
+        self._config = self._load_config()
         default_name = self._config.get("default", "")
         targets = [
             self._target_from_config(name, data).public_dict()
@@ -312,6 +312,7 @@ class SsmBridgeBackend:
         aws_profile: str = "",
         instance_id: str = "",
     ) -> SsmTarget:
+        self._config = self._load_config()
         target_name = target or os.environ.get(ENV_TARGET, "") or self._config.get("default") or ""
         target_data = (self._config.get("targets") or {}).get(target_name, {})
         env_target = self._target_from_env()
@@ -324,14 +325,22 @@ class SsmBridgeBackend:
             raise ValueError(f"unknown target: {target_name}")
 
         resolved = self._target_from_config(target_name or "override", target_data)
+        different_instance = bool(
+            (aws_profile and aws_profile != resolved.aws_profile)
+            or (instance_id and instance_id != resolved.instance_id)
+        )
         return SsmTarget(
-            name=resolved.name,
+            name="override" if different_instance else resolved.name,
             aws_profile=aws_profile or resolved.aws_profile,
             instance_id=instance_id or resolved.instance_id,
-            host_hint=resolved.host_hint,
-            private_ip=resolved.private_ip,
+            host_hint="" if different_instance else resolved.host_hint,
+            private_ip="" if different_instance else resolved.private_ip,
             auto_sso_login=resolved.auto_sso_login,
-            sso_profile=resolved.sso_profile or resolved.aws_profile,
+            sso_profile=(
+                aws_profile
+                if aws_profile and aws_profile != resolved.aws_profile
+                else resolved.sso_profile or resolved.aws_profile
+            ),
         )
 
     def _raise_if_ambiguous_target(self, *, target: str, aws_profile: str, instance_id: str) -> None:
@@ -408,6 +417,7 @@ class SsmBridgeBackend:
         }
 
     def _profile_for_lookup(self, *, aws_profile: str = "") -> str:
+        self._config = self._load_config()
         if aws_profile:
             return aws_profile
         target_name = os.environ.get(ENV_TARGET, "") or self._config.get("default") or ""

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from mcp_server import create_mcp_server
 
 
@@ -29,3 +31,5 @@ class FakeBackend:
 def test_create_mcp_server() -> None:
     app = create_mcp_server(FakeBackend())
     assert app is not None
+    names = {tool.name for tool in asyncio.run(app.list_tools())}
+    assert {"ssm_configure_sso", "ssm_login_start", "ssm_login_status", "ssm_save_target"} <= names

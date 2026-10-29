@@ -1,10 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["cli", "mcp_server", "ssm_bridge", "ssm_setup"]
+
 [project]
 name = "ssm-bridge-mcp"
 version = "0.1.0"
 description = "MCP server and CLI for AWS SSM-managed instance access."
 requires-python = ">=3.11"
 dependencies = [
-  "mcp>=1.27.0"
+  "mcp>=1.27.0,<2"
 ]
 
 [project.scripts]

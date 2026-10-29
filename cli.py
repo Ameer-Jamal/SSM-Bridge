@@ -2,14 +2,26 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 
 from ssm_bridge import SsmBridgeBackend, SsmBridgeError
+from ssm_setup import SsmSetup
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run AWS SSM operations from the terminal.")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    configure = subparsers.add_parser("configure-sso", help="Create a local SSO profile without overwriting settings.")
+    for flag in ("aws-profile", "start-url", "sso-region", "account-id", "role-name", "region"):
+        configure.add_argument(f"--{flag}", required=True)
+    login = subparsers.add_parser("login", help="Show browser/device URL and wait for human SSO/MFA approval.")
+    login.add_argument("--aws-profile", required=True)
+    save = subparsers.add_parser("save-target", help="Verify and save an SSM target locally.")
+    for flag in ("target", "aws-profile", "instance-id"):
+        save.add_argument(f"--{flag}", required=True)
+    save.add_argument("--make-default", action="store_true")
 
     subparsers.add_parser("targets", help="List configured targets.")
     status_parser = subparsers.add_parser("status", help="Check target status.")
@@ -56,7 +68,22 @@ def main(argv: list[str] | None = None) -> int:
     backend = SsmBridgeBackend()
 
     try:
-        if args.command == "targets":
+        if args.command == "configure-sso":
+            result = SsmSetup(backend).configure_sso(
+                aws_profile=args.aws_profile, start_url=args.start_url, sso_region=args.sso_region,
+                account_id=args.account_id, role_name=args.role_name, region=args.region,
+            )
+        elif args.command == "login":
+            return subprocess.run(
+                [backend.aws_binary, "sso", "login", "--profile", args.aws_profile,
+                 "--no-browser", "--use-device-code"], timeout=900, check=False,
+            ).returncode
+        elif args.command == "save-target":
+            result = SsmSetup(backend).save_target(
+                target=args.target, aws_profile=args.aws_profile,
+                instance_id=args.instance_id, make_default=args.make_default,
+            )
+        elif args.command == "targets":
             result = backend.list_targets()
         elif args.command == "status":
             result = backend.status(target=args.target, aws_profile=args.aws_profile, instance_id=args.instance_id)
@@ -96,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         else:
             raise ValueError(f"unsupported command: {args.command}")
-    except (SsmBridgeError, ValueError) as exc:
+    except (SsmBridgeError, ValueError, OSError, subprocess.TimeoutExpired) as exc:
         print(json.dumps({"success": False, "error": str(exc)}, indent=2), file=sys.stderr)
         return 1
 

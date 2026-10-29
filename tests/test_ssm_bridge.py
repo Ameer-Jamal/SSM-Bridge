@@ -98,6 +98,10 @@ def test_resolve_target_overrides(tmp_path: Path) -> None:
 
     assert target.aws_profile == "other"
     assert target.instance_id == "i-override"
+    assert target.sso_profile == "other"
+    assert target.name == "override"
+    assert target.host_hint == ""
+    assert target.private_ip == ""
 
 
 def test_unknown_target_requires_overrides(tmp_path: Path) -> None:
@@ -345,6 +349,26 @@ def test_expired_sso_runs_login_and_retries(tmp_path: Path) -> None:
 
     assert result["identity"] == {"UserId": "u"}
     assert run.call_args_list[1].args[0] == ["aws", "sso", "login", "--profile", "example-profile"]
+
+
+def test_expired_sso_refreshes_overridden_profile(tmp_path: Path) -> None:
+    config = tmp_path / "targets.json"
+    write_config(config)
+    backend = SsmBridgeBackend(config_path=config)
+    responses = [
+        completed("", "Error when retrieving token from sso: Token has expired", 255),
+        completed(),
+        completed(json.dumps({"Account": "123456789012"})),
+        completed(json.dumps({"InstanceInformationList": []})),
+    ]
+
+    with patch("ssm_bridge.subprocess.run", side_effect=responses) as run:
+        backend.status(aws_profile="govcloud", instance_id="i-govcloud")
+
+    assert run.call_args_list[1].args[0] == ["aws", "sso", "login", "--profile", "govcloud"]
+    for index in (0, 2, 3):
+        args = run.call_args_list[index].args[0]
+        assert args[args.index("--profile") + 1] == "govcloud"
 
 
 def test_auto_sso_login_can_be_disabled(tmp_path: Path) -> None:

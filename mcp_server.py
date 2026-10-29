@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from ssm_bridge import SsmBridgeBackend
+from ssm_setup import SsmSetup
 
 try:
     from mcp.server.fastmcp import FastMCP
@@ -16,6 +17,37 @@ def create_mcp_server(backend: SsmBridgeBackend | None = None):
 
     backend = backend or SsmBridgeBackend()
     app = FastMCP("SSM Bridge", json_response=True)
+    setup = SsmSetup(backend)
+
+    @app.tool()
+    def ssm_configure_sso(
+        aws_profile: str, start_url: str, sso_region: str,
+        account_id: str, role_name: str, region: str,
+    ) -> dict[str, Any]:
+        """Create local IAM Identity Center profile from known portal/account details; preserve existing profiles."""
+        return setup.configure_sso(
+            aws_profile=aws_profile, start_url=start_url, sso_region=sso_region,
+            account_id=account_id, role_name=role_name, region=region,
+        )
+
+    @app.tool()
+    def ssm_login_start(aws_profile: str) -> dict[str, Any]:
+        """Start browser SSO login; return approval URL. Human completes Okta/MFA; poll ssm_login_status."""
+        return setup.login_start(aws_profile=aws_profile)
+
+    @app.tool()
+    def ssm_login_status(login_id: str, wait_seconds: int = 0) -> dict[str, Any]:
+        """Check a pending login; wait up to 20 seconds. Never approve MFA on the user's behalf."""
+        return setup.login_status(login_id=login_id, wait_seconds=wait_seconds)
+
+    @app.tool()
+    def ssm_save_target(
+        target: str, aws_profile: str, instance_id: str, make_default: bool = False,
+    ) -> dict[str, Any]:
+        """Verify identity/SSM and save a local target; refuse to replace another host. No remote commands."""
+        return setup.save_target(
+            target=target, aws_profile=aws_profile, instance_id=instance_id, make_default=make_default,
+        )
 
     @app.tool()
     def ssm_list_targets() -> dict[str, Any]:
